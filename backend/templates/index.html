@@ -241,12 +241,24 @@
         });
 
         function startRealtime() {
-        ws = new WebSocket('ws://localhost:8000/ws');
-        
-        ws.onmessage = (event) => {
-            const data = JSON.parse(event.data);
-            displayResponse(data.analysis);
-        };
+            console.log('WebSocket 연결 시도 중...');
+            ws = new WebSocket('ws://localhost:8001/ws');
+            
+            ws.onopen = function() {
+                console.log('✅ WebSocket 연결 성공');
+                document.getElementById('analyzeBtn').textContent = '분석 중지';
+                isRealtime = true;
+            };
+            
+            ws.onerror = function(error) {
+                console.error('❌ WebSocket 오류:', error);
+                console.log('서버 상태 확인: http://localhost:8001/model-status');
+            };
+            
+            ws.onclose = function(event) {
+                console.log('WebSocket 연결 종료:', event.code, event.reason);
+            };
+        }
         
         // 0.5초마다 프레임 캡처해서 전송
         realtimeInterval = setInterval(() => {
