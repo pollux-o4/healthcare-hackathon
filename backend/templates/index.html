@@ -194,13 +194,14 @@
         let stream = null;
         let ws = null;
         let isRealtime = false;
+        let realtimeInterval = null;
 
         const startBtn = document.getElementById('start-btn');
         const captureBtn = document.getElementById('capture-btn');
         const stopBtn = document.getElementById('stop-btn');
         const responseDiv = document.getElementById('llm-response');
 
-        // 기존 수동 캡처 기능 유지
+        // 웹캠 시작
         startBtn.addEventListener('click', async () => {
             try {
                 stream = await navigator.mediaDevices.getUserMedia({video: {width: 640, height: 480}});
@@ -208,12 +209,13 @@
                 startBtn.disabled = true;
                 captureBtn.disabled = false;
                 stopBtn.disabled = false;
+                showMessage('웹캠이 시작되었습니다.', 'success');
             } catch (err) {
                 showMessage(`웹캠 오류: ${err.message}`, 'error');
             }
         });
 
-        // 실시간 모드로 변경
+        // 실시간 모드 토글
         captureBtn.addEventListener('click', () => {
             if (!isRealtime) {
                 startRealtime();
@@ -226,6 +228,7 @@
             }
         });
 
+        // 웹캠 정지
         stopBtn.addEventListener('click', () => {
             if (stream) {
                 stream.getTracks().forEach(track => track.stop());
@@ -238,66 +241,103 @@
             stopBtn.disabled = true;
             captureBtn.textContent = '감정 분석';
             isRealtime = false;
+            showMessage('웹캠이 정지되었습니다.', 'success');
         });
 
+        // 프레임 캡처 함수
+        function captureFrame() {
+            const canvas = document.getElementById('canvas');
+            canvas.width = video.videoWidth || 640;
+            canvas.height = video.videoHeight || 480;
+            const context = canvas.getContext('2d');
+            context.drawImage(video, 0, 0, canvas.width, canvas.height);
+            return canvas.toDataURL('image/jpeg', 0.8);
+        }
+
+        // 실시간 분석 시작
         function startRealtime() {
-            console.log('WebSocket 연결 시도 중...');
-            ws = new WebSocket('ws://localhost:8001/ws');
-            
-            ws.onopen = function() {
-                console.log('✅ WebSocket 연결 성공');
-                document.getElementById('analyzeBtn').textContent = '분석 중지';
-                isRealtime = true;
-            };
-            
-            ws.onerror = function(error) {
-                console.error('❌ WebSocket 오류:', error);
-                console.log('서버 상태 확인: http://localhost:8001/model-status');
-            };
-            
-            ws.onclose = function(event) {
-                console.log('WebSocket 연결 종료:', event.code, event.reason);
-            };
-        }
-        
-        // 0.5초마다 프레임 캡처해서 전송
-        realtimeInterval = setInterval(() => {
-            if (ws && video.videoWidth > 0) {
-                const canvas = document.createElement('canvas');
-                canvas.width = video.videoWidth;
-                canvas.height = video.videoHeight;
-                const ctx = canvas.getContext('2d');
-                ctx.drawImage(video, 0, 0);
+            try {
+                ws = new WebSocket('ws://localhost:8000/ws');
                 
-                canvas.toBlob((blob) => {
-                    if (ws && ws.readyState === WebSocket.OPEN) {
-                        ws.send(blob);
-                    }
-                }, 'image/jpeg', 0.8);
+                ws.onopen = () => {
+                    showMessage('서버에 연결되었습니다. 실시간 감정 분석을 시작합니다.', 'success');
+                    
+                    // 1초마다 프레임 캡처 및 전송
+                    realtimeInterval = setInterval(() => {
+                        if (ws && ws.readyState === WebSocket.OPEN) {
+                            const imageData = captureFrame();
+                            // base64에서 "data:image/jpeg;base64," 부분 제거
+                            const base64Data = imageData.split(',')[1];
+                            ws.send(JSON.stringify({image: base64Data}));
+                        }
+                    }, 1000);
+                };
+                
+                ws.onmessage = (event) => {
+                    const data = JSON.parse(event.data);
+                    displayResponse(data.analysis);
+                };
+                
+                ws.onerror = (error) => {
+                    showMessage('WebSocket 연결 오류가 발생했습니다.', 'error');
+                    stopRealtime();
+                    captureBtn.textContent = '감정 분석';
+                    isRealtime = false;
+                };
+                
+                ws.onclose = () => {
+                    showMessage('서버 연결이 끊어졌습니다.', 'error');
+                    stopRealtime();
+                    captureBtn.textContent = '감정 분석';
+                    isRealtime = false;
+                };
+                
+            } catch (error) {
+                showMessage('WebSocket 연결 중 오류가 발생했습니다.', 'error');
             }
-        }, 500);
-    }
-
-    function stopRealtime() {
-        if (realtimeInterval) {
-            clearInterval(realtimeInterval);
-            realtimeInterval = null;
         }
-        if (ws) {
-            ws.close();
-            ws = null;
-        }
-    }
 
+        // 실시간 분석 중지
+        function stopRealtime() {
+            if (realtimeInterval) {
+                clearInterval(realtimeInterval);
+                realtimeInterval = null;
+            }
+            if (ws) {
+                ws.close();
+                ws = null;
+            }
+        }
+
+        // 결과 표시
         function displayResponse(analysis) {
             responseDiv.className = 'has-content';
             responseDiv.textContent = analysis;
         }
 
+        // 메시지 표시
         function showMessage(message, type) {
             responseDiv.className = type;
             responseDiv.textContent = message;
+            
+            // 3초 후에 기본 상태로 복원 (success나 일반 메시지의 경우)
+            if (type === 'success') {
+                setTimeout(() => {
+                    if (responseDiv.className === 'success') {
+                        responseDiv.className = '';
+                        responseDiv.textContent = `캡처된 이미지의 AI 감정 분석 결과가 여기에 표시됩니다.
+
+사용 방법:
+1. "웹캠 시작" 버튼을 클릭하여 웹캠을 활성화
+2. "감정 분석" 버튼을 클릭하여 현재 화면 캡처 및 분석
+3. AI 모델이 감정을 분석한 결과 확인
+
+🎯 지원 감정: 화남, 혐오, 두려움, 행복, 중립, 슬픔, 놀람`;
+                    }
+                }, 3000);
+            }
         }
     </script>
+    
 </body>
 </html>
