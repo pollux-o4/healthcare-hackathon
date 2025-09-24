@@ -241,19 +241,41 @@
         });
 
         function startRealtime() {
-            ws = new WebSocket('ws://localhost:8000/ws');
-            ws.onmessage = (event) => {
-                const data = JSON.parse(event.data);
-                displayResponse(data.analysis);
-            };
-        }
-
-        function stopRealtime() {
-            if (ws) {
-                ws.close();
-                ws = null;
+        ws = new WebSocket('ws://localhost:8000/ws');
+        
+        ws.onmessage = (event) => {
+            const data = JSON.parse(event.data);
+            displayResponse(data.analysis);
+        };
+        
+        // 0.5초마다 프레임 캡처해서 전송
+        realtimeInterval = setInterval(() => {
+            if (ws && video.videoWidth > 0) {
+                const canvas = document.createElement('canvas');
+                canvas.width = video.videoWidth;
+                canvas.height = video.videoHeight;
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(video, 0, 0);
+                
+                canvas.toBlob((blob) => {
+                    if (ws && ws.readyState === WebSocket.OPEN) {
+                        ws.send(blob);
+                    }
+                }, 'image/jpeg', 0.8);
             }
+        }, 500);
+    }
+
+    function stopRealtime() {
+        if (realtimeInterval) {
+            clearInterval(realtimeInterval);
+            realtimeInterval = null;
         }
+        if (ws) {
+            ws.close();
+            ws = null;
+        }
+    }
 
         function displayResponse(analysis) {
             responseDiv.className = 'has-content';
